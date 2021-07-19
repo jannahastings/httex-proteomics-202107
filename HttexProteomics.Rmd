@@ -1,0 +1,483 @@
+---
+title: "Httex Proteomics - 2021 Experiment"
+author: "J. Hastings"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+# Set the working directory you are going to use
+prjdir="/Users/hastings/Work/BIX/bix-projects/202103_htexprot_llab/"
+
+
+setwd(prjdir)
+knitr::opts_knit$set(root.dir=prjdir, cache=TRUE)
+knitr::opts_chunk$set(echo=FALSE, message = FALSE, warning = FALSE, fig.lp = '')
+
+if (!require("readxl")) install.packages("readxl"); library("readxl")
+if (!requireNamespace("ggplot2")) install.packages("ggplot2"); library(ggplot2)
+if (!requireNamespace("tidyverse")) install.packages("tidyverse"); library(tidyverse)
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+
+if (!requireNamespace('DEP')) BiocManager::install("DEP"); library(DEP)
+if (!requireNamespace('EnhancedVolcano', quietly = TRUE)) BiocManager::install('EnhancedVolcano'); library(EnhancedVolcano)
+
+if (!requireNamespace("biomaRt", quietly = TRUE)) BiocManager::install("biomaRt"); library(biomaRt)
+if (!requireNamespace('clusterProfiler', quietly = TRUE)) BiocManager::install("clusterProfiler"); library(clusterProfiler)
+if (!requireNamespace('pathview', quietly = TRUE)) BiocManager::install("pathview"); library(pathview)
+if (!requireNamespace('enrichplot', quietly = TRUE)) BiocManager::install("enrichplot"); library(enrichplot)
+if (!requireNamespace('eulerr')) BiocManager::install('eulerr')
+library(eulerr)
+require(DOSE)
+#library(reshape2)
+library(org.Hs.eg.db)
+library(org.Mm.eg.db)
+library(ggrepel)
+if (!requireNamespace('svglite', quietly = TRUE)) install.packages("svglite"); library(svglite)
+
+#if (!requireNamespace('MSstats', quietly = TRUE)) BiocManager::install("MSstats"); library(MSstats)
+
+```
+
+# Httex1 Proteomics
+
+## Overview of the dataset
+
+``` {r loadData}
+
+# Read in MaxQuant files
+data <- read.table("210323/MQ_output/proteinGroups.txt", sep="\t", header=TRUE)
+
+# We filter for contaminant proteins and decoy database hits, which are indicated by "+" in the columns "Potential.contaminants" and "Reverse", respectively. 
+data <- filter(data, Reverse != "+", Potential.contaminant != "+")
+
+#data.httex1.LFQ <- data[,grepl("^LFQ",colnames(data))]
+
+#summary(data.httex1.LFQ)
+
+#data.httex1.LFQ.clean <- data.httex1.LFQ[!apply(data.httex1.LFQ, 1, function(row) any(is.na(row)) ),  ]
+#data.httex1.LFQ.clean <- data.httex1.LFQ.clean[which(rowSums(data.httex1.LFQ.clean)>0),]
+
+#plot(density(as.matrix(data.httex1.LFQ.clean)))
+#plot(density(std_dev))
+
+#httex1.pca <- prcomp(t(data.httex1.LFQ.clean), scale = TRUE)
+
+#summary(httex1.pca)
+
+#PCAscores <- httex1.pca$x
+#PCAloadings <- httex1.pca$rotation
+#PCAcolors <- c(rep("gold",3),rep("lightblue",3),rep("blue",3),rep("lightgreen",3))
+
+#plot(PCAscores[,1:2],  # x and y data
+#     pch=21,           # point shape
+#     col=PCAcolors,    # point border color
+#     bg=PCAcolors,     # point color
+#     cex=1.5,          # point size
+#     main="Scores"     # title of plot
+#)
+#text(PCAscores[,1:2],labels=colnames(data.httex1.LFQ.clean),cex=0.5)
+#legend("bottomright",                                # position of legend
+#       legend=c("GFP","Httex116Q","Httex172Q","Httex172QGFP"),    # legend display
+#       pch=21,                                    # point shape
+#       pt.bg=c("gold","lightblue","blue","lightgreen"),    # point colors
+#       pt.cex=1.5,                                # point size
+#       col = c("gold","lightblue","blue","lightgreen")    # point border color
+#)
+
+#compute standard deviation of each principal component
+#std_dev <- httex1.pca$sdev
+#compute variance
+#pr_var <- std_dev^2
+#check variance of first 10 components
+#pr_var[1:10]
+#prop_varex <- pr_var/sum(pr_var)
+#prop_varex[1:10]
+
+#plot(prop_varex, xlab = "Principal Component",
+#             ylab = "Proportion of Variance Explained",
+#             ylim = c(0,1),
+#             type = "b",pch=16,col='black')
+#lines(cumsum(prop_varex),col='blue',type='b',pch=16)
+#legend("topleft",legend=c("%var explained by PC","cumulative %var PC"),col=c("black","blue"),cex=0.5,pch=15)
+
+#cormat <- cor(data.httex1.LFQ.clean)
+#cormat
+
+#col<- colorRampPalette(c("blue", "white", "red"))(20)
+#heatmap(cormat, col=col, symm=TRUE,cexRow = 0.5, cexCol = 0.5)
+
+# Scatter plot of correlations
+#pairs(data.httex1.LFQ.clean, pch = 19)
+
+#plot(density(cormat))
+
+```
+
+## Data pretreatment and normalisation
+
+``` {r dataPreTreatment}
+
+
+#, fig.width=10, fig.height=6}
+
+geneIdCol <- "Gene.names"
+protIdCol <- "Protein.IDs"
+colPrefix <- "^LFQ."
+	
+# Following tutorial at https://www.bioconductor.org/packages/release/bioc/vignettes/DEP/inst/doc/DEP.html#loading-of-the-data
+	# DEP uses limma
+
+	### Deal with duplicated gene names
+	
+	# Are there any duplicated gene names?
+	data[,geneIdCol] %>% base::duplicated() %>% any()
+	# [1] TRUE
+	
+	# Make a table of duplicated gene names
+	data %>% group_by_(geneIdCol) %>% summarize(frequency = n()) %>% 
+	  arrange(desc(frequency)) %>% filter(frequency > 1)
+	
+	# Make unique names using the annotation in the "Gene.names" column as primary names and the annotation in "Protein.IDs" as name for those that do not have an gene name.
+	data_unique <- make_unique(data, geneIdCol, protIdCol, delim = ";")
+	
+	# Are there any duplicated names?
+	data$name %>% duplicated() %>% any()
+	# [1] FALSE
+	
+	# Generate a SummarizedExperiment object by parsing condition information from the column names
+	LFQ_columns <- grep(colPrefix, colnames(data_unique)) # get LFQ column numbers
+	data_se <- make_se_parse(data_unique, LFQ_columns)
+	
+	# Let's have a look at the SummarizedExperiment object
+	data_se
+	
+	### Deal with missing values
+	
+	# Plot a barplot of the protein identification overlap between samples
+	plot_frequency(data_se)
+	
+	# The dataset contains proteins which are not quantified in all replicates. Some proteins are even only quantified in a single replicate.
+	
+	# This leaves our dataset with missing values, which need to be imputed. However, this should not be done for proteins that contain too many missing values. Therefore, we first filter out proteins that contain too many missing values. This is done by setting the threshold for the allowed number of missing values per condition in the filter_missval function.
+	
+	data_filt <- filter_missval(data_se, thr = 0)
+	plot_frequency(data_filt)
+	
+	# Plot a barplot of the number of identified proteins per samples
+	plot_numbers(data_filt)
+	
+	# Plot a barplot of the protein identification overlap between samples
+	plot_coverage(data_filt)
+	
+	
+	### Normalisation
+	
+	
+	# Normalize the data
+	data_norm <- normalize_vsn(data_filt)
+	
+	#plot_pca(data_norm)
+	
+	# Visualize normalization by boxplots for all samples before and after normalization
+	plot_normalization(data_filt, data_norm)
+	
+	### Impute data for missing values
+	
+	# Plot a heatmap of proteins with missing values
+	plot_missval(data_filt)
+	
+	# Plot intensity distributions and cumulative fraction of proteins with and without missing values
+	plot_detect(data_filt)
+	
+	# Indeed the proteins with missing values have on average low intensities. This data (MNAR and close to the detection limit) should be imputed by a left-censored imputation method, such as the quantile regression-based left-censored function (“QRILC”) or random draws from a left-shifted distribution (“MinProb” and “man”). In contrast, MAR data should be imputed with methods such as k-nearest neighbor (“knn”) or maximum likelihood (“MLE”) functions. See the MSnbase vignette and more specifically the impute function description for more information.
+	
+	# Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
+	data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
+	
+	# Impute missing data using random draws from a manually defined left-shifted Gaussian distribution (for MNAR)
+	#data_imp_man <- impute(data_norm, fun = "man", shift = 1.8, scale = 0.3)
+	
+	# Impute missing data using the k-nearest neighbour approach (for MAR)
+	#data_imp_knn <- impute(data_norm, fun = "knn", rowmax = 0.9)
+	
+	# Plot intensity distributions before and after imputation
+	plot_imputation(data_norm, data_imp)
+	
+  # PCA of the normalised and imputed values
+	plot_pca(data_imp)
+```
+
+
+## Differential analysis 
+
+We can look at which proteins are differing between conditions. 
+
+``` {r differentialAnalysis, fig.width=7, fig.height=6}
+
+	
+	### Differential Enrichment Analysis 
+	
+	# Differential enrichment analysis  based on linear models and empherical Bayes statistics
+	
+	# Test every sample versus control
+	data_diff <- test_diff(data_imp, type = "manual", test=c(
+	  "Httex116Q_0_vs_GFP_0","Httex172Q_0_vs_GFP_0","Httex172QGFP_0_vs_GFP_0",
+	  "Httex172Q_0_vs_Httex116Q_0","Httex172QGFP_0_vs_Httex116Q_0",
+	  "Httex172QGFP_0_vs_Httex172Q_0"
+	))
+	
+	# Denote significant proteins based on user defined cutoffs
+	dep <- add_rejections(data_diff, alpha = 0.05, lfc = 1)
+
+	
+	plot_cond(dep)
+	
+	# Generate a results table
+	data_results <- get_results(dep)
+	
+	# Number of significant proteins
+	data_results %>% filter(significant) %>% nrow()
+	
+	#Of these columns, the p.val and p.adj columns contain the raw and adjusted p values, respectively, for the contrast as depicted in the column name. The ratio columns contain the average log2 fold changes. The significant columns indicate whether the protein is differentially enriched/expressed, as defined by the chosen cutoffs. The centered columns contain the average log2 fold changes scaled by protein-wise centering.
+	
+	contrasts = gsub("_p.adj","",colnames(data_results)[grepl("p.adj",colnames(data_results))])
+	               
+	for ( contrast in contrasts ) {
+    res.contrast <- data_results[,paste0(contrast, c("_p.val","_ratio","_p.adj"))]
+    rownames(res.contrast) = data_results$name
+    # Data for plotting
+    res.contrast$log10pval = unlist(lapply(res.contrast[,paste0(contrast,"_p.adj")], function(x) -log10(x) ))
+    res.contrast$diffexpressed <- "NO"
+    res.contrast$diffexpressed[res.contrast[,paste0(contrast,"_ratio")] > 1 & res.contrast[,paste0(contrast,"_p.adj")] < 0.05] <- "UP"
+    res.contrast$diffexpressed[res.contrast[,paste0(contrast,"_ratio")] < -1 & res.contrast[,paste0(contrast,"_p.adj")] < 0.05] <- "DOWN"
+    res.contrast$delabel <- NA
+    res.contrast$delabel[res.contrast$diffexpressed != "NO"] <- rownames(res.contrast[res.contrast$diffexpressed != "NO",])
+    
+    mycolors <- c("blue", "red", "grey")
+    names(mycolors) <- c("DOWN", "UP", "NO")
+    
+    p <- ggplot(data=res.contrast, 
+                aes_string(x=paste0(contrast,"_ratio"), y="log10pval", col="diffexpressed", label="delabel") ) +
+        geom_point() + theme_classic() + scale_colour_manual(values = mycolors) + geom_text_repel() +
+        coord_cartesian(xlim = c(-8, 8), ylim = c(0, max(res.contrast$log10pval))) +
+        labs(title=contrast, x ="Ratio", y = "-Log10 (P adj)")
+
+    p2 <- p + geom_vline(xintercept=c(-1, 1), col="black", linetype="dotted") +
+      geom_hline(yintercept=-log10(0.05), col="black", linetype="dotted")
+    
+    print(p2)
+    
+    ggsave(file=paste(contrast,"-volcano-labelled.svg"), plot=p2, width=10, height=8)
+    
+    p3 <- ggplot(data=res.contrast, 
+                aes_string(x=paste0(contrast,"_ratio"), y="log10pval", col="diffexpressed") ) +
+        geom_point() + theme_classic() + scale_colour_manual(values = mycolors) + 
+        coord_cartesian(xlim = c(-8, 8), ylim = c(0, max(res.contrast$log10pval))) +
+        labs(title=contrast, x ="Ratio", y = "-Log10 (P adj)") + geom_vline(xintercept=c(-1, 1), col="black", linetype="dotted") + geom_hline(yintercept=-log10(0.05), col="black", linetype="dotted")
+    
+    ggsave(file=paste(contrast,"-volcano.svg"), plot=p3, width=10, height=8)
+    
+ }
+
+```
+
+
+``` {r gse, fig.width=12, fig.height=5}
+
+getGOEnrichment <- function(gene.list, background.list, name, ontoname="ALL", orgdb = 'org.Mm.eg.db') {
+  
+  gse <- enrichGO(gene=gene.list,
+									universe=background.list,
+	             		ont = ontoname, 
+	             		keyType = "SYMBOL",  
+	             		minGSSize = 10, 
+	             		maxGSSize = 500, 
+	             		pvalueCutoff = 0.1, 
+	             		OrgDb = orgdb)
+  return (gse)
+}
+
+getKEGGenrichment <- function(uniprot.list, background.list, organism="mmu") { # Or "hsa"
+
+  gsek <- enrichKEGG(
+    gene=uniprot.list,
+    organism = organism,
+    keyType = "uniprot",
+    pvalueCutoff = 0.1,
+    universe=background.list,
+    minGSSize = 10,
+    maxGSSize = 500,
+    qvalueCutoff = 0.2
+  )
+  
+  return(gsek)
+  
+}
+
+# Background
+all.genes.symbols <- data_unique$name 
+all.uniprots <- data_unique$ID
+
+for (contrast in contrasts) {
+  res.contrast <- data_results[,paste0(contrast, c("_p.val","_ratio","_p.adj"))]
+  rownames(res.contrast) = data_results$name
+  
+  colnames(res.contrast) <- c("pval","ratio","padj")
+  
+  genes.up <- rownames(res.contrast[which(res.contrast$padj < 0.05 & res.contrast$ratio > 1),])
+  uniprots.up <- data_unique$ID[which(data_unique$name %in% genes.up)]
+  
+  genes.down <- rownames(res.contrast[which(res.contrast$padj < 0.05 & res.contrast$ratio < -1),]) 
+  uniprots.down <- data_unique$ID[which(data_unique$name %in% genes.down)]
+  
+  for (ontoname in c("MF","BP","CC") ) {
+    gse <- getGOEnrichment(genes.up,all.genes.symbols, paste("up in",contrast), ontoname=ontoname, orgdb=org.Mm.eg.db)
+    
+    if (!is.null(gse) && !is.null(gse@result) && nrow(gse@result)>0) {
+      if (sum(gse@result$p.adjust<0.1) > 0) {
+        print(barplot(gse,title=paste(ontoname,"enrichment for genes UP in ",contrast)))
+      }
+      write.csv(gse@result,file=paste0(contrast,"-",ontoname,"-up-enrich-results.csv"))
+    }
+    
+    gsek <- getKEGGenrichment(uniprots.up, all.uniprots)
+    
+    if (!is.null(gsek) && !is.null(gsek@result) && nrow(gsek@result)>0) {
+      if (sum(gsek@result$p.adjust<0.1) > 0) {
+        print(barplot(gsek,title=paste("KEGG enrichment for genes UP in ",contrast)))
+      }
+      write.csv(gsek@result,file=paste0(contrast,"-","KEGG-up-enrich-results.csv"))
+    }
+    
+    gse <- getGOEnrichment(genes.down,all.genes.symbols, paste("down in",contrast), ontoname=ontoname, orgdb=org.Mm.eg.db)
+    #par(mfrow=c(1,1))
+    
+    if (!is.null(gse) && !is.null(gse@result) && nrow(gse@result)>0) {
+      if (sum(gse@result$p.adjust<0.1) > 0) {
+        print(barplot(gse,title=paste(ontoname,"enrichment for genes DOWN in ",contrast)))
+      }
+      write.csv(gse@result,file=paste0(contrast,"-",ontoname,"-down-enrich-results.csv"))
+    }
+    
+    gsek <- getKEGGenrichment(uniprots.down, all.uniprots)
+    
+    if (!is.null(gsek) && !is.null(gsek@result) && nrow(gsek@result)>0) {
+      if (sum(gsek@result$p.adjust<0.1) > 0) {
+        print(barplot(gsek,title=paste("KEGG enrichment for genes DOWN in ",contrast)))
+      }
+      write.csv(gsek@result,file=paste0(contrast,"-","KEGG-down-enrich-results.csv"))
+    }
+  }
+}
+
+```
+
+
+
+## Overlaps 
+
+We can look at the overlaps between the proteins that were found to be differentially abundant between conditions. 
+
+
+```{r overlaps}
+
+contrast.pairs <- combn(contrasts,2)
+
+for (i in 1:ncol(contrast.pairs)){ 
+    contrast.one <- contrast.pairs[1,i]
+    contrast.two <- contrast.pairs[2,i]
+    
+    genes.one <- data_results$name[which(data_results[,paste0(contrast.one,"_significant")])]
+    genes.two <- data_results$name[which(data_results[,paste0(contrast.two,"_significant")])]
+    
+    list_genes = list()
+    list_genes[[1]] <- genes.one
+    list_genes[[2]] <- genes.two
+    names(list_genes) <- c(contrast.one,contrast.two)
+    
+    print(plot(euler(list_genes), quantities=TRUE, main="Comparison"))
+    
+    genes.one.not.two <- genes.one[!genes.one %in% genes.two]
+    genes.shared <- genes.one[genes.one %in% genes.two]
+    genes.two.not.one <- genes.two[! genes.two %in% genes.one]
+    
+    df <- data.frame(vec1 = rep(NA, max(sapply(list(genes.one.not.two, genes.shared, genes.two.not.one), length))))
+    df[1:length(genes.one.not.two), 1] <- genes.one.not.two
+    if (length(genes.shared)>0) {
+      df[1:length(genes.shared), 2] <- genes.shared
+    } else {
+      df[1:length(genes.one.not.two), 2] <- NA
+    }
+    df[1:length(genes.two.not.one), 3] <- genes.two.not.one
+    write.csv(df, file = paste0('comparison',contrast.one,'-',contrast.two,'genes.csv'), row.names = FALSE, na = '')
+ } 
+
+
+
+write.csv(data_results, file="comparison_results.csv")
+
+
+
+```
+
+
+```{r compareToOtherDatasets}
+
+pubdata.directory <- '/Users/hastings/Work/BIX/bix-projects/202102_httinteracts_llab/hdd-genesets/httinteracts/'
+file.name <- "interactors.xlsx"
+
+data.hdd <- as.data.frame(read_excel(paste0(pubdata.directory,file.name), sheet = "HTT Interactors")) # 9178 rows
+
+data.hdd <- data.hdd[which(data.hdd$`Model Name` %in% c("Human","Mice","Cell culture")),] # 3798 rows
+
+data.hdd.mouse <- data.hdd[which(data.hdd$`Interactor Gene Origin`=="Mus musculus"),] # 3727
+
+data.hdd.human <- data.hdd[which(data.hdd$`Interactor Gene Origin`=="Homo sapiens"),] # 71
+
+genes.mouse.hdd <- unique(data.hdd.mouse$`Interactor Gene Symbol`)
+genes.human.hdd <- unique(data.hdd.human$`Interactor Gene Symbol`)
+
+#genes.hdd <- unique(c(convertMouseGeneList(genes.mouse.hdd),genes.human.hdd))  # 1147
+
+
+for (contrast in contrasts) {
+  res.contrast <- data_results[,paste0(contrast, c("_p.val","_ratio","_p.adj"))]
+  rownames(res.contrast) = data_results$name
+  
+  colnames(res.contrast) <- c("pval","ratio","padj")
+  
+  genes.up <- rownames(res.contrast[which(res.contrast$padj < 0.05 & res.contrast$ratio > 1),])
+  genes.down <- rownames(res.contrast[which(res.contrast$padj < 0.05 & res.contrast$ratio < -1),]) 
+ 
+  genes.one <- c(genes.up, genes.down)
+  genes.two <- genes.mouse.hdd
+  
+  list_genes = list()
+  list_genes[[1]] <- genes.one
+  list_genes[[2]] <- genes.two
+  names(list_genes) <- c(contrast,"HTT interactors from HDinHD")
+  
+  print(plot(euler(list_genes), quantities=TRUE, main="Comparison to HDinHD dataset"))
+  
+  genes.one.not.two <- genes.one[!genes.one %in% genes.two]
+  genes.shared <- genes.one[genes.one %in% genes.two]
+  genes.two.not.one <- genes.two[! genes.two %in% genes.one]
+  
+  df <- data.frame(vec1 = rep(NA, max(sapply(list(genes.one.not.two, genes.shared, genes.two.not.one), length))))
+    df[1:length(genes.one.not.two), 1] <- genes.one.not.two
+    if (length(genes.shared)>0) {
+      df[1:length(genes.shared), 2] <- genes.shared
+    } else {
+      df[1:length(genes.one.not.two), 2] <- NA
+    }
+    df[1:length(genes.two.not.one), 3] <- genes.two.not.one
+    write.csv(df, file = paste0('comparison',contrast,'-','HDinHD','-genes.csv'), row.names = FALSE, na = '')
+
+}
+
+```
