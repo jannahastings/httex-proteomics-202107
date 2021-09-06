@@ -6,4 +6,4 @@ The repository contains the R code used in the analysis of proteomics data for H
 
 N. Riguet et al., "Nuclear and cytoplasmic huntingtin inclusions exhibit distinct biochemical composition, interactome and ultrastructural properties", Nature Communications 2021. 
 
-The analysis uses the [DEP](https://bioconductor.org/packages/devel/bioc/vignettes/DEP/inst/doc/DEP.html) library for proteomics data analysis. 
+The analysis uses the [DEP](https://bioconductor.org/packages/devel/bioc/vignettes/DEP/inst/doc/DEP.html) library for proteomics data. 
